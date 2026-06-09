@@ -21,7 +21,11 @@ const envSchema = z.object({
   SUMMARY_MODEL: z.string().default("gpt-4.1-mini"),
 });
 
-export const env = envSchema.parse(process.env);
+const rawEnv = Object.fromEntries(
+  Object.entries(process.env).map(([key, value]) => [key, value === "" ? undefined : value]),
+);
+
+export const env = envSchema.parse(rawEnv);
 
 export function requireEnv<K extends keyof typeof env>(key: K): NonNullable<(typeof env)[K]> {
   const value = env[key];
