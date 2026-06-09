@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { env } from "@/lib/env";
 import { exchangeCodeForConnection, syncUpcomingMeetings } from "@/lib/google/calendar";
 import { jsonError } from "@/lib/http";
 
@@ -21,7 +22,7 @@ export async function GET(request: NextRequest) {
     const connection = await exchangeCodeForConnection(code, parsedState.userId);
     await syncUpcomingMeetings(connection.id);
 
-    return NextResponse.redirect(new URL(`/settings?connected=google`, request.url));
+    return NextResponse.redirect(new URL(`/settings?connected=google`, env.APP_BASE_URL));
   } catch (error) {
     if (error instanceof SyntaxError) {
       return NextResponse.json({ error: "Invalid OAuth state" }, { status: 400 });
