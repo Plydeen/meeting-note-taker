@@ -14,6 +14,25 @@ export function assertCronAuthorized(request: NextRequest) {
 }
 
 export function jsonError(error: unknown, status = 500) {
-  const message = error instanceof Error ? error.message : "Unexpected error";
-  return NextResponse.json({ error: message }, { status });
+  console.error("[api error]", error);
+
+  let message = "Unexpected error";
+  let details: Record<string, unknown> | undefined;
+
+  if (error instanceof Error) {
+    message = error.message;
+  } else if (error && typeof error === "object" && "message" in error) {
+    const supaError = error as { message?: unknown; details?: unknown; hint?: unknown; code?: unknown };
+    message = String(supaError.message ?? message);
+    details = {
+      ...(supaError.details ? { details: supaError.details } : {}),
+      ...(supaError.hint ? { hint: supaError.hint } : {}),
+      ...(supaError.code ? { code: supaError.code } : {}),
+    };
+    if (Object.keys(details).length === 0) {
+      details = undefined;
+    }
+  }
+
+  return NextResponse.json({ error: message, ...(details ? { details } : {}) }, { status });
 }
