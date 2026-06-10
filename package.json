@@ -10,14 +10,18 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "verify:fixtures": "node scripts/verify-fixtures.mjs",
-    "verify:config": "node scripts/verify-config.mjs"
+    "verify:config": "node scripts/verify-config.mjs",
+    "verify:bunsen": "node scripts/verify-bunsen.mjs"
   },
   "keywords": [],
   "author": "",
   "license": "UNLICENSED",
   "type": "module",
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0",
     "@supabase/supabase-js": "^2.108.0",
+    "ffmpeg-static": "^5.3.0",
+    "mcp-handler": "^1.1.0",
     "next": "^16.2.7",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",

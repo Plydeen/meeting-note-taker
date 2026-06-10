@@ -53,9 +53,13 @@ export default async function SettingsPage({
         <pre>{`POST /api/cron/sync-calendars
 POST /api/cron/queue-recall-bots
 POST /api/cron/summarize-meetings
+POST /api/cron/embed-summaries
 
 Recall realtime webhook:
-POST /api/webhooks/recall`}</pre>
+POST /api/webhooks/recall
+
+Beaker MCP (Bearer MCP_ACCESS_TOKEN):
+POST https://mcp.parkerlab.cc/api/mcp/mcp`}</pre>
       </section>
     </div>
   );

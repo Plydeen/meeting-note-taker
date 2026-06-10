@@ -2,20 +2,17 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 
+import { takeNotes } from "@/lib/bunsen/notes";
+import { renderBunsenMarkdown } from "@/lib/bunsen/render";
+import { researchKeyPoints } from "@/lib/bunsen/research";
+import type { BunsenNotes } from "@/lib/bunsen/types";
+import { extractMeetingKeyframes } from "@/lib/bunsen/video";
+import { embedMeetingSummary } from "@/lib/beaker/embeddings";
 import { env } from "@/lib/env";
 import { backfillTranscriptFromRecall } from "@/lib/recall/client";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
 
 const NO_TRANSCRIPT_ERROR = "Cannot summarize a meeting without transcript segments.";
-
-type SummaryJson = {
-  overview: string;
-  decisions: string[];
-  action_items: Array<{ task: string; owner?: string; due?: string }>;
-  risks: string[];
-  open_questions: string[];
-  follow_ups: string[];
-};
 
 export async function summarizeMeeting(meetingId: string) {
   const supabase = createSupabaseAdmin();
@@ -28,8 +25,6 @@ export async function summarizeMeeting(meetingId: string) {
   let segments = await fetchSegments(meetingId);
 
   if (segments.length === 0) {
-    // Realtime webhooks may have been missed entirely (tunnel down, app restart,
-    // parsing failure). Recall keeps the finished transcript, so pull it directly.
     await backfillTranscriptFromRecall(meetingId);
     segments = await fetchSegments(meetingId);
   }
@@ -56,8 +51,11 @@ export async function summarizeMeeting(meetingId: string) {
 
   await supabase.from("meetings").update({ status: "processing_summary", updated_at: new Date().toISOString() }).eq("id", meetingId);
 
-  const summary = await generateSummary(meeting.title, transcript);
-  const summaryMarkdown = renderSummaryMarkdown(summary);
+  const keyframes = await extractMeetingKeyframes(meetingId);
+  let notes: BunsenNotes = await takeNotes({ title: meeting.title, transcript, keyframes });
+  notes = { ...notes, research: await researchKeyPoints(notes, meeting.title) };
+  const summaryMarkdown = renderBunsenMarkdown(notes);
+
   const { data, error } = await supabase
     .from("meeting_summaries")
     .insert({
@@ -65,7 +63,7 @@ export async function summarizeMeeting(meetingId: string) {
       provider: env.SUMMARY_PROVIDER,
       model: env.SUMMARY_MODEL,
       summary_markdown: summaryMarkdown,
-      summary_json: summary,
+      summary_json: notes,
       transcript_hash: transcriptHash,
     })
     .select()
@@ -76,6 +74,13 @@ export async function summarizeMeeting(meetingId: string) {
   }
 
   await supabase.from("meetings").update({ status: "complete", updated_at: new Date().toISOString(), error: null }).eq("id", meetingId);
+
+  try {
+    await embedMeetingSummary(meetingId);
+  } catch (embedError) {
+    console.warn("[beaker] embedding failed after summarize", embedError);
+  }
+
   return data;
 }
 
@@ -83,8 +88,6 @@ export async function summarizeReadyMeetings() {
   const supabase = createSupabaseAdmin();
   const endedBefore = new Date(Date.now() - 2 * 60 * 1000).toISOString();
 
-  // bot_joined is included so meetings still summarize when no webhook ever
-  // upgraded the status (e.g. the tunnel was down during the call).
   const { data: meetings, error } = await supabase
     .from("meetings")
     .select()
@@ -95,8 +98,6 @@ export async function summarizeReadyMeetings() {
     throw error;
   }
 
-  // Retry meetings that previously failed only because no transcript segments
-  // were stored. Recall may have the transcript ready now (backfill fetches it).
   const { data: retryable, error: retryError } = await supabase
     .from("meetings")
     .select()
@@ -143,114 +144,4 @@ async function fetchSegments(meetingId: string) {
   }
 
   return data ?? [];
-}
-
-async function generateSummary(title: string, transcript: string): Promise<SummaryJson> {
-  if (!env.OPENAI_API_KEY) {
-    return fallbackSummary(transcript);
-  }
-
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${env.OPENAI_API_KEY}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      model: env.SUMMARY_MODEL,
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content:
-            "Summarize meeting transcripts into strict JSON with keys: overview, decisions, action_items, risks, open_questions, follow_ups. action_items is an array of objects with task, owner, due.",
-        },
-        {
-          role: "user",
-          content: `Meeting title: ${title}\n\nTranscript:\n${transcript}`,
-        },
-      ],
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Summary provider failed: ${await response.text()}`);
-  }
-
-  const payload = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
-  const content = payload.choices?.[0]?.message?.content;
-  if (!content) {
-    throw new Error("Summary provider returned no content.");
-  }
-
-  return normalizeSummary(JSON.parse(content));
-}
-
-function fallbackSummary(transcript: string): SummaryJson {
-  const lines = transcript.split("\n").filter(Boolean);
-  return {
-    overview: lines.slice(0, 5).join(" ").slice(0, 1200) || "Transcript captured. Configure OPENAI_API_KEY to generate richer summaries.",
-    decisions: [],
-    action_items: [],
-    risks: [],
-    open_questions: [],
-    follow_ups: [],
-  };
-}
-
-function normalizeSummary(value: unknown): SummaryJson {
-  const input = value && typeof value === "object" ? (value as Partial<SummaryJson>) : {};
-  return {
-    overview: typeof input.overview === "string" ? input.overview : "",
-    decisions: Array.isArray(input.decisions) ? input.decisions.map(String) : [],
-    action_items: Array.isArray(input.action_items)
-      ? input.action_items.map((item) => {
-          if (item && typeof item === "object") {
-            const action = item as { task?: unknown; owner?: unknown; due?: unknown };
-            return {
-              task: String(action.task ?? ""),
-              owner: action.owner ? String(action.owner) : undefined,
-              due: action.due ? String(action.due) : undefined,
-            };
-          }
-
-          return { task: String(item) };
-        })
-      : [],
-    risks: Array.isArray(input.risks) ? input.risks.map(String) : [],
-    open_questions: Array.isArray(input.open_questions) ? input.open_questions.map(String) : [],
-    follow_ups: Array.isArray(input.follow_ups) ? input.follow_ups.map(String) : [],
-  };
-}
-
-function renderSummaryMarkdown(summary: SummaryJson) {
-  const actionItems = summary.action_items.map((item) => {
-    const owner = item.owner ? ` (${item.owner})` : "";
-    const due = item.due ? ` due ${item.due}` : "";
-    return `- ${item.task}${owner}${due}`;
-  });
-
-  return [
-    "## Overview",
-    summary.overview,
-    "",
-    "## Decisions",
-    renderList(summary.decisions),
-    "",
-    "## Action Items",
-    actionItems.length ? actionItems.join("\n") : "- None captured",
-    "",
-    "## Risks",
-    renderList(summary.risks),
-    "",
-    "## Open Questions",
-    renderList(summary.open_questions),
-    "",
-    "## Follow-ups",
-    renderList(summary.follow_ups),
-  ].join("\n");
-}
-
-function renderList(items: string[]) {
-  return items.length ? items.map((item) => `- ${item}`).join("\n") : "- None captured";
 }

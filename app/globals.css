@@ -118,3 +118,56 @@ pre {
   padding: 18px;
   white-space: pre-wrap;
 }
+
+.bunsen-summary {
+  display: grid;
+  gap: 10px;
+}
+
+.bunsen-section {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0 14px 12px;
+}
+
+.bunsen-section > summary {
+  cursor: pointer;
+  font-weight: 700;
+  list-style: none;
+  padding: 12px 0;
+}
+
+.bunsen-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.bunsen-body {
+  display: grid;
+  gap: 8px;
+}
+
+.bunsen-body ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.solution-block,
+.research-block {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.tech-stack {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  background: #eef2ff;
+  border-radius: 999px;
+  color: #3730a3;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 10px;
+}

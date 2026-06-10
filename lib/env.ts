@@ -19,6 +19,11 @@ const envSchema = z.object({
   SUMMARY_PROVIDER: z.string().default("openai"),
   OPENAI_API_KEY: z.string().optional(),
   SUMMARY_MODEL: z.string().default("gpt-4.1-mini"),
+  RESEARCH_MODEL: z.string().default("gpt-4.1"),
+  BUNSEN_MAX_RESEARCH_TOPICS: z.coerce.number().int().positive().default(5),
+  BUNSEN_MAX_KEYFRAMES: z.coerce.number().int().positive().default(12),
+  EMBEDDING_MODEL: z.string().default("text-embedding-3-small"),
+  MCP_ACCESS_TOKEN: z.string().optional(),
 });
 
 const rawEnv = Object.fromEntries(

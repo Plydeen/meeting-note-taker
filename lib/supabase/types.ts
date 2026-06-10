@@ -187,9 +187,45 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["meeting_summaries"]["Row"]>;
         Relationships: [];
       };
+      meeting_embeddings: {
+        Row: {
+          id: string;
+          meeting_id: string;
+          source: string;
+          content: string;
+          content_hash: string;
+          embedding: number[];
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          meeting_id: string;
+          source?: string;
+          content: string;
+          content_hash: string;
+          embedding: number[];
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["meeting_embeddings"]["Insert"]>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
-    Functions: Record<string, never>;
+    Functions: {
+      match_meeting_embeddings: {
+        Args: {
+          query_embedding: number[];
+          match_count?: number;
+        };
+        Returns: Array<{
+          meeting_id: string;
+          content: string;
+          similarity: number;
+        }>;
+      };
+    };
     Enums: {
       meeting_status: MeetingStatus;
       meeting_platform: MeetingPlatform;

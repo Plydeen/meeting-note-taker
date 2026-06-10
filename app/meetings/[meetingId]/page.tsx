@@ -1,5 +1,7 @@
 import { getMeetingDetail } from "@/lib/meetings/data";
 
+import { BunsenSummary } from "./bunsen-summary";
+
 export default async function MeetingDetailPage({ params }: { params: Promise<{ meetingId: string }> }) {
   const { meetingId } = await params;
   const { meeting, segments, summary, bots, participants } = await getMeetingDetail(meetingId);
@@ -52,7 +54,7 @@ export default async function MeetingDetailPage({ params }: { params: Promise<{ 
 
       <section className="card">
         <h2>Summary</h2>
-        {summary ? <pre>{summary.summary_markdown}</pre> : <p className="muted">No summary generated yet.</p>}
+        {summary ? <BunsenSummary summary={summary} /> : <p className="muted">No summary generated yet.</p>}
       </section>
 
       <section className="card">
