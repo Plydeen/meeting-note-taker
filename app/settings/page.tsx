@@ -20,9 +20,15 @@ export default async function SettingsPage({
         {connected ? <p>Google Calendar connected successfully.</p> : null}
         {!userId ? <p className="muted">Set `DEV_USER_ID` in `.env.local`, or add `?userId=YOUR_SUPABASE_USER_ID`, to configure a calendar connection.</p> : null}
         {userId ? (
-          <a className="button" href={`/api/auth/google/start?userId=${userId}`}>
-            Connect Google Calendar
-          </a>
+          <>
+            <a className="button" href={`/api/auth/google/start?userId=${userId}`}>
+              {connections.length ? "Connect another Google Calendar" : "Connect Google Calendar"}
+            </a>
+            <p className="muted">
+              You can connect multiple Google accounts. Each one is synced independently and meetings from all of
+              them appear on the dashboard.
+            </p>
+          </>
         ) : null}
       </section>
 

@@ -61,7 +61,9 @@ export function getGoogleAuthUrl(state: string) {
     response_type: "code",
     scope: GOOGLE_CALENDAR_SCOPES.join(" "),
     access_type: "offline",
-    prompt: "consent",
+    // select_account forces Google's account picker so additional Google
+    // accounts can be connected instead of silently reusing the active session.
+    prompt: "consent select_account",
     state,
   });
 
