@@ -3,7 +3,10 @@ import "server-only";
 import { createHash } from "node:crypto";
 
 import { env } from "@/lib/env";
+import { backfillTranscriptFromRecall } from "@/lib/recall/client";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
+
+const NO_TRANSCRIPT_ERROR = "Cannot summarize a meeting without transcript segments.";
 
 type SummaryJson = {
   overview: string;
@@ -22,23 +25,21 @@ export async function summarizeMeeting(meetingId: string) {
     throw meetingError;
   }
 
-  const { data: segments, error: segmentsError } = await supabase
-    .from("transcript_segments")
-    .select()
-    .eq("meeting_id", meetingId)
-    .order("starts_at_ms", { ascending: true, nullsFirst: false })
-    .order("created_at", { ascending: true });
+  let segments = await fetchSegments(meetingId);
 
-  if (segmentsError) {
-    throw segmentsError;
+  if (segments.length === 0) {
+    // Realtime webhooks may have been missed entirely (tunnel down, app restart,
+    // parsing failure). Recall keeps the finished transcript, so pull it directly.
+    await backfillTranscriptFromRecall(meetingId);
+    segments = await fetchSegments(meetingId);
   }
 
-  const transcript = (segments ?? [])
+  const transcript = segments
     .map((segment) => `${segment.speaker_name ?? "Speaker"}: ${segment.text}`)
     .join("\n");
 
   if (!transcript.trim()) {
-    throw new Error("Cannot summarize a meeting without transcript segments.");
+    throw new Error(NO_TRANSCRIPT_ERROR);
   }
 
   const transcriptHash = createHash("sha256").update(transcript).digest("hex");
@@ -80,18 +81,38 @@ export async function summarizeMeeting(meetingId: string) {
 
 export async function summarizeReadyMeetings() {
   const supabase = createSupabaseAdmin();
+  const endedBefore = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+
+  // bot_joined is included so meetings still summarize when no webhook ever
+  // upgraded the status (e.g. the tunnel was down during the call).
   const { data: meetings, error } = await supabase
     .from("meetings")
     .select()
-    .in("status", ["processing_summary", "transcript_streaming"])
-    .lte("ends_at", new Date(Date.now() - 2 * 60 * 1000).toISOString());
+    .in("status", ["processing_summary", "transcript_streaming", "bot_joined"])
+    .lte("ends_at", endedBefore);
 
   if (error) {
     throw error;
   }
 
+  // Retry meetings that previously failed only because no transcript segments
+  // were stored. Recall may have the transcript ready now (backfill fetches it).
+  const { data: retryable, error: retryError } = await supabase
+    .from("meetings")
+    .select()
+    .eq("status", "failed")
+    .eq("error", NO_TRANSCRIPT_ERROR)
+    .gte("ends_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+    .lte("ends_at", endedBefore);
+
+  if (retryError) {
+    throw retryError;
+  }
+
+  const candidates = [...(meetings ?? []), ...(retryable ?? [])];
+
   const summaries = [];
-  for (const meeting of meetings ?? []) {
+  for (const meeting of candidates) {
     try {
       summaries.push(await summarizeMeeting(meeting.id));
     } catch (error) {
@@ -107,6 +128,21 @@ export async function summarizeReadyMeetings() {
   }
 
   return summaries;
+}
+
+async function fetchSegments(meetingId: string) {
+  const { data, error } = await createSupabaseAdmin()
+    .from("transcript_segments")
+    .select()
+    .eq("meeting_id", meetingId)
+    .order("starts_at_ms", { ascending: true, nullsFirst: false })
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    throw error;
+  }
+
+  return data ?? [];
 }
 
 async function generateSummary(title: string, transcript: string): Promise<SummaryJson> {

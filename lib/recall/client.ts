@@ -1,6 +1,6 @@
 import "server-only";
 
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 import { env, requireEnv } from "@/lib/env";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
@@ -14,6 +14,32 @@ type RecallBotResponse = {
   [key: string]: Json | undefined;
 };
 
+type RecallWord = {
+  text?: string;
+  start_timestamp?: { relative?: number } | null;
+  end_timestamp?: { relative?: number } | null;
+};
+
+type RecallParticipant = { id?: number | string; name?: string | null };
+
+type RecallBotDetail = {
+  id: string;
+  recordings?: Array<{
+    id?: string;
+    media_shortcuts?: {
+      transcript?: {
+        id?: string;
+        data?: { download_url?: string | null } | null;
+      } | null;
+    } | null;
+  }>;
+};
+
+type RecallTranscriptUtterance = {
+  participant?: RecallParticipant | null;
+  words?: RecallWord[];
+};
+
 type RecallTranscriptPayload = {
   event?: string;
   data?: {
@@ -21,17 +47,13 @@ type RecallTranscriptPayload = {
       code?: string;
       sub_code?: string | null;
       updated_at?: string;
+      status?: { code?: string; sub_code?: string | null };
+      words?: RecallWord[];
+      participant?: { id?: number | string; name?: string | null };
     };
     bot?: { id?: string };
     transcript?: {
       id?: string;
-      words?: Array<{
-        text?: string;
-        start_timestamp?: { relative?: number };
-        end_timestamp?: { relative?: number };
-      }>;
-      speaker?: { name?: string; id?: string };
-      is_final?: boolean;
     };
   };
   bot_id?: string;
@@ -125,7 +147,8 @@ export async function handleRecallWebhook(rawBody: string, headers: Headers) {
   const payload = JSON.parse(rawBody) as RecallTranscriptPayload;
   const eventType = payload.event ?? "unknown";
   const recallBotId = getRecallBotId(payload);
-  const idempotencyKey = getIdempotencyKey(payload, rawBody);
+  const messageId = headers.get("webhook-id") ?? headers.get("svix-id");
+  const idempotencyKey = messageId ?? getIdempotencyKey(payload, rawBody);
   const supabase = createSupabaseAdmin();
   const meeting = recallBotId ? await findMeetingByRecallBotId(recallBotId) : null;
 
@@ -156,6 +179,14 @@ export async function handleRecallWebhook(rawBody: string, headers: Headers) {
     await updateBotLifecycle(recallBotId, eventType, payload);
   }
 
+  if (meeting && (eventType === "transcript.done" || eventType === "bot.done")) {
+    try {
+      await backfillTranscriptFromRecall(meeting.id);
+    } catch (error) {
+      console.error("[recall webhook] transcript backfill failed", error);
+    }
+  }
+
   if (meeting) {
     const status = mapRecallEventToMeetingStatus(eventType);
     if (status) {
@@ -163,7 +194,10 @@ export async function handleRecallWebhook(rawBody: string, headers: Headers) {
         .from("meetings")
         .update({
           status,
-          error: status === "failed" ? payload.data?.data?.sub_code ?? eventType : null,
+          error:
+            status === "failed"
+              ? payload.data?.data?.status?.sub_code ?? payload.data?.data?.sub_code ?? eventType
+              : null,
           updated_at: new Date().toISOString(),
         })
         .eq("id", meeting.id);
@@ -289,29 +323,45 @@ async function findMeetingByRecallBotId(recallBotId: string) {
 }
 
 async function upsertTranscriptSegment(meetingId: string, recallBotId: string | null, payload: RecallTranscriptPayload) {
-  const transcript = payload.data?.transcript;
-  const words = transcript?.words ?? [];
+  const data = payload.data?.data;
+  await storeTranscriptSegment(meetingId, recallBotId, data?.words ?? [], data?.participant ?? null, payload as Json);
+}
+
+async function storeTranscriptSegment(
+  meetingId: string,
+  recallBotId: string | null,
+  words: RecallWord[],
+  participant: RecallParticipant | null,
+  rawPayload: Json,
+) {
   const text = words.map((word) => word.text).filter(Boolean).join(" ").trim();
 
   if (!text) {
-    return;
+    return false;
   }
 
-  const startsAtMs = words[0]?.start_timestamp?.relative;
-  const endsAtMs = words[words.length - 1]?.end_timestamp?.relative;
+  const startsAtRelative = words[0]?.start_timestamp?.relative;
+  const endsAtRelative = words[words.length - 1]?.end_timestamp?.relative;
+  const startsAtMs = typeof startsAtRelative === "number" ? Math.round(startsAtRelative * 1000) : null;
+  const endsAtMs = typeof endsAtRelative === "number" ? Math.round(endsAtRelative * 1000) : null;
+
+  const speakerId = participant?.id != null ? String(participant.id) : null;
+  const externalSegmentId = createHash("sha256")
+    .update(`${speakerId ?? "spk"}:${startsAtMs ?? "s"}:${endsAtMs ?? "e"}:${text}`)
+    .digest("hex");
 
   const { error } = await createSupabaseAdmin().from("transcript_segments").upsert(
     {
       meeting_id: meetingId,
       recall_bot_id: recallBotId,
-      external_segment_id: transcript?.id ?? getIdempotencyKey(payload, text),
-      speaker_name: transcript?.speaker?.name ?? null,
-      speaker_id: transcript?.speaker?.id ?? null,
+      external_segment_id: externalSegmentId,
+      speaker_name: participant?.name ?? null,
+      speaker_id: speakerId,
       text,
-      starts_at_ms: typeof startsAtMs === "number" ? Math.round(startsAtMs * 1000) : null,
-      ends_at_ms: typeof endsAtMs === "number" ? Math.round(endsAtMs * 1000) : null,
-      is_final: transcript?.is_final ?? true,
-      raw_payload: payload as Json,
+      starts_at_ms: startsAtMs,
+      ends_at_ms: endsAtMs,
+      is_final: true,
+      raw_payload: rawPayload,
     },
     { onConflict: "meeting_id,external_segment_id" },
   );
@@ -319,6 +369,68 @@ async function upsertTranscriptSegment(meetingId: string, recallBotId: string | 
   if (error) {
     throw error;
   }
+
+  return true;
+}
+
+/**
+ * Fetches the finished transcript for a meeting straight from the Recall API and
+ * stores any segments that are missing locally. This makes summaries resilient to
+ * missed realtime webhooks (tunnel down, app restart, etc.).
+ */
+export async function backfillTranscriptFromRecall(meetingId: string) {
+  const supabase = createSupabaseAdmin();
+  const { data: bots, error } = await supabase
+    .from("recall_bots")
+    .select("recall_bot_id")
+    .eq("meeting_id", meetingId);
+
+  if (error) {
+    throw error;
+  }
+
+  let stored = 0;
+  for (const bot of bots ?? []) {
+    const response = await fetch(`https://${env.RECALLAI_REGION}.recall.ai/api/v1/bot/${bot.recall_bot_id}/`, {
+      headers: {
+        authorization: requireEnv("RECALLAI_API_KEY"),
+        accept: "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Recall.ai bot retrieve failed: ${await response.text()}`);
+    }
+
+    const detail = (await response.json()) as RecallBotDetail;
+    for (const recording of detail.recordings ?? []) {
+      const downloadUrl = recording.media_shortcuts?.transcript?.data?.download_url;
+      if (!downloadUrl) {
+        continue;
+      }
+
+      const transcriptResponse = await fetch(downloadUrl);
+      if (!transcriptResponse.ok) {
+        throw new Error(`Recall.ai transcript download failed: ${await transcriptResponse.text()}`);
+      }
+
+      const utterances = (await transcriptResponse.json()) as RecallTranscriptUtterance[];
+      for (const utterance of utterances ?? []) {
+        const inserted = await storeTranscriptSegment(
+          meetingId,
+          bot.recall_bot_id,
+          utterance.words ?? [],
+          utterance.participant ?? null,
+          { source: "recall_api_backfill", participant: (utterance.participant ?? null) as Json },
+        );
+        if (inserted) {
+          stored += 1;
+        }
+      }
+    }
+  }
+
+  return stored;
 }
 
 async function updateBotLifecycle(recallBotId: string, eventType: string, payload: RecallTranscriptPayload) {
