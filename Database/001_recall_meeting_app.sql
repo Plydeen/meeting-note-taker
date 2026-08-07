@@ -52,7 +52,7 @@ create table if not exists public.calendar_connections (
 create table if not exists public.meetings (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.profiles(id) on delete cascade,
-  calendar_connection_id uuid references public.calendar_connections(id) on delete set null,
+  calendar_connection_id uuid references public.calendar_connections(id) on delete cascade,
   external_calendar_id text,
   title text not null default 'Untitled meeting',
   description text,

@@ -8,6 +8,9 @@ const envSchema = z.object({
   APP_BASE_URL: z.string().url().default("http://localhost:3000"),
   CRON_SECRET: z.string().optional(),
   DEV_USER_ID: z.string().uuid().optional(),
+  // Comma-separated allowlist of emails permitted to sign in. When empty, any
+  // authenticated Supabase user is allowed (rely on disabled signups).
+  ALLOWED_EMAILS: z.string().optional(),
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GOOGLE_REDIRECT_URI: z.string().url().optional(),
@@ -24,6 +27,9 @@ const envSchema = z.object({
   BUNSEN_MAX_KEYFRAMES: z.coerce.number().int().positive().default(12),
   EMBEDDING_MODEL: z.string().default("text-embedding-3-small"),
   MCP_ACCESS_TOKEN: z.string().optional(),
+  // IANA timezone used to render meeting times in the UI. The server runs in
+  // UTC, so without this all times display 4-5h off for US Eastern users.
+  DISPLAY_TIMEZONE: z.string().default("America/New_York"),
 });
 
 const rawEnv = Object.fromEntries(

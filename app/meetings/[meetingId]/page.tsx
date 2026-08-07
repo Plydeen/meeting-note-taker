@@ -1,10 +1,21 @@
+import { notFound } from "next/navigation";
+
+import { requireUser } from "@/lib/auth";
 import { getMeetingDetail } from "@/lib/meetings/data";
+import { formatDateTime, formatTime } from "@/lib/format";
 
 import { BunsenSummary } from "./bunsen-summary";
 
 export default async function MeetingDetailPage({ params }: { params: Promise<{ meetingId: string }> }) {
   const { meetingId } = await params;
-  const { meeting, segments, summary, bots, participants } = await getMeetingDetail(meetingId);
+  const user = await requireUser();
+  const detail = await getMeetingDetail(meetingId, user.id);
+
+  if (!detail) {
+    notFound();
+  }
+
+  const { meeting, segments, summary, bots, participants } = detail;
 
   return (
     <div className="grid">
@@ -12,8 +23,8 @@ export default async function MeetingDetailPage({ params }: { params: Promise<{ 
         <p className="muted">{meeting.platform}</p>
         <h1>{meeting.title}</h1>
         <p className="muted">
-          {new Date(meeting.starts_at).toLocaleString()}
-          {meeting.ends_at ? ` to ${new Date(meeting.ends_at).toLocaleTimeString()}` : ""}
+          {formatDateTime(meeting.starts_at)}
+          {meeting.ends_at ? ` to ${formatTime(meeting.ends_at)}` : ""}
         </p>
         <span className="status">{meeting.status}</span>
         {meeting.meeting_url ? (

@@ -1,25 +1,32 @@
 import Link from "next/link";
 
-import { getRequestUserId } from "@/lib/dev-user";
+import { InstantJoinForm } from "@/app/components/instant-join-form";
+import { ensureProfile, requireUser } from "@/lib/auth";
 import { getDashboardData } from "@/lib/meetings/data";
+import { formatDateTime } from "@/lib/format";
 
-export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ userId?: string }> }) {
-  const params = await searchParams;
-  const userId = getRequestUserId(params.userId);
-  const { meetings, summaries, connections } = await getDashboardData(userId);
+export default async function DashboardPage() {
+  const user = await requireUser();
+  await ensureProfile(user);
+  const { meetings, summaries, connections } = await getDashboardData(user.id);
 
   return (
     <div className="grid">
       <section className="card">
         <p className="muted">Calendar-driven meeting intelligence</p>
         <h1>Send a Recall.ai bot to your meetings and store searchable summaries in Supabase.</h1>
-        {!userId ? (
-          <p className="muted">Set `DEV_USER_ID` in `.env.local`, or add `?userId=YOUR_SUPABASE_USER_ID`, before full auth is added.</p>
-        ) : (
-          <Link className="button" href={{ pathname: "/settings", query: { userId } }}>
-            Configure calendar
-          </Link>
-        )}
+        <Link className="button" href="/settings">
+          Configure calendar
+        </Link>
+      </section>
+
+      <section className="card">
+        <h2>Join a meeting now</h2>
+        <p className="muted">
+          Paste a Zoom or Google Meet link for urgent calls, last-minute link changes, or meetings that were not on
+          your calendar.
+        </p>
+        <InstantJoinForm />
       </section>
 
       <section className="grid two">
@@ -28,9 +35,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
           <div className="list">
             {meetings.length ? (
               meetings.map((meeting) => (
-                <Link className="list-item" href={{ pathname: `/meetings/${meeting.id}`, query: { userId } }} key={meeting.id}>
+                <Link className="list-item" href={`/meetings/${meeting.id}`} key={meeting.id}>
                   <strong>{meeting.title}</strong>
-                  <p className="muted">{new Date(meeting.starts_at).toLocaleString()}</p>
+                  <p className="muted">{formatDateTime(meeting.starts_at)}</p>
                   <span className="status">{meeting.status}</span>
                 </Link>
               ))
@@ -47,7 +54,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
               summaries.map((summary) => (
                 <div className="list-item" key={summary.id}>
                   <strong>{summary.provider}</strong>
-                  <p className="muted">{new Date(summary.created_at).toLocaleString()}</p>
+                  <p className="muted">{formatDateTime(summary.created_at)}</p>
                   <p>{summary.summary_markdown.split("\n").slice(0, 3).join(" ")}</p>
                 </div>
               ))

@@ -1,10 +1,12 @@
 import "server-only";
 
 import { env, requireEnv } from "@/lib/env";
+import { detectMeetingPlatform } from "@/lib/meetings/platform";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
-import type { Database, MeetingPlatform } from "@/lib/supabase/types";
+import type { Database } from "@/lib/supabase/types";
 
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
+const GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke";
 const GOOGLE_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo";
 const GOOGLE_CALENDAR_EVENTS_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
 
@@ -124,6 +126,28 @@ export async function exchangeCodeForConnection(code: string, userId: string) {
   return data;
 }
 
+// Best-effort revocation of a Google OAuth grant so the app no longer retains
+// access after a connection is removed. Failures are swallowed because the
+// connection row is deleted regardless (e.g. token already expired/revoked).
+export async function revokeGoogleToken(token: string | null | undefined) {
+  if (!token) {
+    return false;
+  }
+
+  try {
+    const response = await fetch(GOOGLE_REVOKE_URL, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ token }),
+    });
+
+    return response.ok;
+  } catch (error) {
+    console.error("[google revoke] failed", error);
+    return false;
+  }
+}
+
 export async function syncUpcomingMeetings(connectionId: string, lookaheadDays = 14) {
   const supabase = createSupabaseAdmin();
   const { data: connection, error } = await supabase
@@ -230,18 +254,6 @@ export function extractMeetingUrl(event: GoogleEvent) {
   }
 
   return null;
-}
-
-export function detectMeetingPlatform(url: string): MeetingPlatform {
-  if (/zoom\.us/i.test(url)) {
-    return "zoom";
-  }
-
-  if (/meet\.google\.com/i.test(url)) {
-    return "google_meet";
-  }
-
-  return "unknown";
 }
 
 async function fetchGoogleUserInfo(accessToken: string) {

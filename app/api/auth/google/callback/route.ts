@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { getCurrentUser } from "@/lib/auth";
 import { env } from "@/lib/env";
 import { exchangeCodeForConnection, syncUpcomingMeetings } from "@/lib/google/calendar";
 import { jsonError } from "@/lib/http";
@@ -11,6 +12,11 @@ type GoogleState = {
 
 export async function GET(request: NextRequest) {
   try {
+    const user = await getCurrentUser();
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const code = request.nextUrl.searchParams.get("code");
     const state = request.nextUrl.searchParams.get("state");
 
@@ -19,7 +25,12 @@ export async function GET(request: NextRequest) {
     }
 
     const parsedState = JSON.parse(Buffer.from(state, "base64url").toString("utf8")) as GoogleState;
-    const connection = await exchangeCodeForConnection(code, parsedState.userId);
+    if (parsedState.userId !== user.id) {
+      return NextResponse.json({ error: "OAuth state does not match the signed-in user" }, { status: 400 });
+    }
+
+    // Bind the connection to the verified session user, not the state payload.
+    const connection = await exchangeCodeForConnection(code, user.id);
     await syncUpcomingMeetings(connection.id);
 
     return NextResponse.redirect(new URL(`/settings?connected=google`, env.APP_BASE_URL));

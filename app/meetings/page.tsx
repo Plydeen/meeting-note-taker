@@ -1,24 +1,29 @@
 import Link from "next/link";
 
-import { getRequestUserId } from "@/lib/dev-user";
+import { InstantJoinForm } from "@/app/components/instant-join-form";
+import { requireUser } from "@/lib/auth";
 import { getMeetings } from "@/lib/meetings/data";
+import { formatDateTime } from "@/lib/format";
 
-export default async function MeetingsPage({ searchParams }: { searchParams: Promise<{ userId?: string }> }) {
-  const params = await searchParams;
-  const userId = getRequestUserId(params.userId);
-  const meetings = await getMeetings(userId);
+export default async function MeetingsPage() {
+  const user = await requireUser();
+  const meetings = await getMeetings(user.id);
 
   return (
     <section className="card">
       <h1>Meetings</h1>
-      {!userId ? <p className="muted">Set `DEV_USER_ID` in `.env.local`, or provide `?userId=YOUR_SUPABASE_USER_ID`, to list meetings.</p> : null}
+      <div style={{ marginBottom: "1.5rem" }}>
+        <h2>Join a meeting now</h2>
+        <p className="muted">Send the agent to a Zoom or Google Meet link immediately.</p>
+        <InstantJoinForm />
+      </div>
       <div className="list">
         {meetings.length ? (
           meetings.map((meeting) => (
-            <Link className="list-item" href={{ pathname: `/meetings/${meeting.id}`, query: { userId } }} key={meeting.id}>
+            <Link className="list-item" href={`/meetings/${meeting.id}`} key={meeting.id}>
               <strong>{meeting.title}</strong>
               <p className="muted">
-                {meeting.platform} · {new Date(meeting.starts_at).toLocaleString()}
+                {meeting.platform} · {formatDateTime(meeting.starts_at)}
               </p>
               <span className="status">{meeting.status}</span>
             </Link>

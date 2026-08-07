@@ -1,0 +1,47 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    networks:
+      - traefik
+      - supabase
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${TRAEFIK_NETWORK}
+      - traefik.http.routers.${STACK_NAME}-app.rule=Host(`${APP_DOMAIN}`)
+      - traefik.http.routers.${STACK_NAME}-app.entrypoints=websecure
+      - traefik.http.routers.${STACK_NAME}-app.tls=true
+      - traefik.http.routers.${STACK_NAME}-app.tls.certresolver=${TRAEFIK_CERT_RESOLVER}
+      - traefik.http.services.${STACK_NAME}-app.loadbalancer.server.port=8002
+
+  cron:
+    image: alpine:3.20
+    restart: unless-stopped
+    depends_on:
+      - app
+    environment:
+      CRON_SECRET: ${CRON_SECRET}
+    networks:
+      - supabase
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        apk add --no-cache curl
+        SECRET="$$CRON_SECRET"
+        {
+          echo "*/2 * * * * curl -fsS -X POST -H \"Authorization: Bearer $$SECRET\" http://app:8002/api/cron/queue-recall-bots"
+          echo "*/5 * * * * curl -fsS -X POST -H \"Authorization: Bearer $$SECRET\" http://app:8002/api/cron/sync-calendars"
+          echo "*/5 * * * * curl -fsS -X POST -H \"Authorization: Bearer $$SECRET\" http://app:8002/api/cron/summarize-meetings"
+          echo "*/15 * * * * curl -fsS -X POST -H \"Authorization: Bearer $$SECRET\" http://app:8002/api/cron/embed-summaries"
+        } > /etc/crontabs/root
+        crond -f -l 2
+
+networks:
+  traefik:
+    external: true
+    name: ${TRAEFIK_NETWORK}
+  supabase:
+    external: true
+    name: ${SUPABASE_DOCKER_NETWORK}

@@ -11,14 +11,8 @@ import {
 } from "@/lib/beaker/tools";
 import { requireEnv } from "@/lib/env";
 
-function verifyMcpAuth(request: Request): boolean {
-  const auth = request.headers.get("authorization");
-  if (!auth?.startsWith("Bearer ")) {
-    return false;
-  }
-
+function tokenMatches(token: string): boolean {
   try {
-    const token = auth.slice("Bearer ".length);
     const expected = requireEnv("MCP_ACCESS_TOKEN");
     const tokenBuffer = Buffer.from(token);
     const expectedBuffer = Buffer.from(expected);
@@ -29,6 +23,24 @@ function verifyMcpAuth(request: Request): boolean {
   } catch {
     return false;
   }
+}
+
+// Accept the token either as an `Authorization: Bearer <token>` header (Claude
+// Code / API clients) or as a `?token=` query param. The claude.ai / Desktop
+// connector dialog only supports "no auth" or OAuth, so for those clients the
+// connector is added as no-auth with the secret carried in the URL.
+function verifyMcpAuth(request: Request): boolean {
+  const auth = request.headers.get("authorization");
+  if (auth?.startsWith("Bearer ")) {
+    return tokenMatches(auth.slice("Bearer ".length));
+  }
+
+  const urlToken = new URL(request.url).searchParams.get("token");
+  if (urlToken) {
+    return tokenMatches(urlToken);
+  }
+
+  return false;
 }
 
 function unauthorizedResponse() {
