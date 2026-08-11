@@ -1,7 +1,7 @@
 import "server-only";
 
 import { env, requireEnv } from "@/lib/env";
-import { detectMeetingPlatform } from "@/lib/meetings/platform";
+import { detectMeetingPlatform, extractMeetingUrlFromText } from "@/lib/meetings/platform";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import type { Database } from "@/lib/supabase/types";
 
@@ -247,9 +247,9 @@ export function extractMeetingUrl(event: GoogleEvent) {
   ].filter(Boolean) as string[];
 
   for (const candidate of candidates) {
-    const match = candidate.match(/https:\/\/(?:[\w.-]*zoom\.us\/j\/[^\s<>"')]+|meet\.google\.com\/[a-z0-9-]+)/i);
-    if (match?.[0]) {
-      return match[0];
+    const url = extractMeetingUrlFromText(candidate);
+    if (url) {
+      return url;
     }
   }
 

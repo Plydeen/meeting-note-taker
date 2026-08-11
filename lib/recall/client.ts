@@ -210,6 +210,9 @@ export async function handleRecallWebhook(rawBody: string, headers: Headers) {
 export async function queueDueRecallBots() {
   const supabase = createSupabaseAdmin();
   const now = new Date();
+  // Small grace window so a meeting isn't permanently skipped when a cron tick
+  // lands just after its start time; the existing-bot check below dedupes.
+  const windowStart = new Date(now.getTime() - 5 * 60 * 1000);
   const windowEnd = new Date(now.getTime() + 10 * 60 * 1000);
 
   const { data: meetings, error } = await supabase
@@ -219,7 +222,7 @@ export async function queueDueRecallBots() {
     .eq("auto_join_enabled", true)
     .eq("requires_approval", false)
     .not("meeting_url", "is", null)
-    .gte("starts_at", now.toISOString())
+    .gte("starts_at", windowStart.toISOString())
     .lte("starts_at", windowEnd.toISOString());
 
   if (error) {

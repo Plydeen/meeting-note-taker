@@ -13,7 +13,12 @@ export function detectMeetingPlatform(url: string): MeetingPlatform {
 }
 
 export function extractMeetingUrlFromText(text: string): string | null {
-  const match = text.match(/https:\/\/(?:[\w.-]*zoom\.us\/j\/[^\s<>"')]+|meet\.google\.com\/[a-z0-9-]+)/i);
+  // Google Calendar descriptions are HTML, so entity-encoded ampersands would
+  // otherwise truncate multi-param URLs (e.g. Zoom webinar registrant tokens).
+  const decoded = text.replace(/&amp;/gi, "&");
+  const match = decoded.match(
+    /https:\/\/(?:[\w.-]*zoom\.us\/(?:j|w|s|wc|my)\/[^\s<>"')]+|meet\.google\.com\/[a-z0-9-]+(?:\?[^\s<>"')]*)?)/i,
+  );
   return match?.[0] ?? null;
 }
 
